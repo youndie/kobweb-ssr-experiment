@@ -189,6 +189,19 @@ assert_contains "styles survive with every script removed" "$LOG_DIR/ssr-nojs" "
 fetch "$LOG_DIR/home" "http://localhost:$PORT_SITE/" >/dev/null
 assert_contains "the home page renders although nobody declared it" "$LOG_DIR/home" "RENDERED BY THE CLIENT"
 
+# --- M5-05: server rendering must not shadow a redirect ------------------------------------------
+
+echo
+echo "M5-05 — redirects survive server rendering"
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:$PORT_SITE/old")
+assert_eq "a redirect whose source is not a page still answers 301" "$CODE" "301"
+# /shadowed is both a @Page route and a redirect source. Before the fix, discovery put it in the
+# SSR set and the interceptor answered 200 with the *target's* content under the *source's* URL.
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:$PORT_SITE/shadowed")
+assert_eq "a redirect whose source is a page route answers 301 too" "$CODE" "301"
+LOCATION=$(curl -sS -o /dev/null -D - "http://localhost:$PORT_SITE/shadowed" | tr -d '\r' | grep -i '^location:' | tr -d ' ')
+assert_eq "and it carries the right target" "$LOCATION" "Location:/ssr"
+
 
 # --- M3: what crosses the boundary --------------------------------------------------------------
 

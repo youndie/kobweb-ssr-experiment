@@ -12,3 +12,15 @@ server:
       siteRoot: ".kobweb/site"
 
   port: 8080
+
+  # M5-05. Kobweb answers these itself with a real 301 and a Location header — checked, not
+  # assumed; the premise this milestone started from was that they were client-side only.
+  #
+  # /shadowed is the case worth having: its `from` is also a @Page route, so route discovery puts
+  # it in the SSR set and the interceptor would answer it with a rendered page before Kobweb ever
+  # got to redirect it. A 200 where a 301 belongs.
+  redirects:
+    - from: "/old"
+      to: "/ssr"
+    - from: "/shadowed"
+      to: "/ssr"

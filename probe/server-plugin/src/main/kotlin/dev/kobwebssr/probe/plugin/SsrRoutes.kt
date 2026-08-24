@@ -41,6 +41,28 @@ object SsrRoutes {
      */
     private val fixtures = setOf("/collide", "/collide2")
 
+    /**
+     * **M5-05.** Routes Kobweb would answer with a redirect, read out of `conf.yaml`.
+     *
+     * Kobweb handles `server.redirects` itself and answers a real 301 with a `Location` header —
+     * which was worth checking, since this milestone began from the assumption that redirects were
+     * client-side only. The defect is narrower than that and worse: when a redirect's `from` is
+     * also a `@Page` route, discovery puts it in the SSR set and the interceptor answers first. The
+     * visitor then gets **the target's content under the source URL with status 200** — wrong body,
+     * wrong status, no `Location` — because the renderer's own fetch follows the redirect.
+     *
+     * Kobweb treats `from` as a regular expression, so this does too. A pattern that fails to
+     * compile is skipped rather than fatal: refusing to start the server over a redirect rule is a
+     * worse outcome than not server-rendering one route.
+     */
+    private fun redirectSources(siteRoot: File): List<Regex> {
+        val conf = File(siteRoot, ".kobweb/conf.yaml")
+        if (!conf.isFile) return emptyList()
+        return Regex("""\bfrom:\s*"?([^"\s]+)"?""").findAll(conf.readText())
+            .mapNotNull { runCatching { Regex(it.groupValues[1]) }.getOrNull() }
+            .toList()
+    }
+
     /** Per-route statements about what the page does not read. See the class comment. */
     private val exemptions = mapOf(
         "/ssr" to RequestContext.entries.toSet(),
@@ -57,15 +79,15 @@ object SsrRoutes {
                 source = "the declared list — $METADATA is not on disk",
             )
         }
-        val found = ROUTE.findAll(file.readText())
-            .map { it.groupValues[1] }
+        val redirected = redirectSources(siteRoot)
+        val all = ROUTE.findAll(file.readText()).map { it.groupValues[1] }.distinct().sorted().toList()
+        val found = all
             .filterNot { it in fixtures }
-            .distinct()
-            .sorted()
-            .toList()
+            .filterNot { route -> redirected.any { it.matches(route) } }
+        val heldBack = all.size - found.size
         return Discovery(
             routes = found.map { SsrRoute(it, exemptions[it].orEmpty()) },
-            source = "$METADATA (${found.size} routes, ${fixtures.size} fixtures held back)",
+            source = "$METADATA (${found.size} routes, $heldBack held back as fixtures or redirects)",
         )
     }
 
