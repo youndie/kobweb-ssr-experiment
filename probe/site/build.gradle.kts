@@ -22,6 +22,12 @@ kobweb {
                 "kobwebssr.cache.enabled",
                 providers.gradleProperty("ssrCache").orElse("true"),
             )
+            // M2-04: the only thing that should have to change to swap renderers. If more than
+            // this had to move, the seam was in the wrong place.
+            systemProperties.put(
+                "kobwebssr.renderer.url",
+                providers.gradleProperty("ssrRenderer").orElse("http://localhost:7899"),
+            )
         }
     }
 }
