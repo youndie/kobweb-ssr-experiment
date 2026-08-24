@@ -1,0 +1,19 @@
+{{- if .Values.traefik.createRedirectMiddleware }}
+# Своя копия, а не ссылка на существующую в соседнем неймспейсе.
+#
+# У traefik может быть выключен `allowCrossNamespace`, и тогда квалифицированное имя не
+# резолвится. Traefik в этом случае не падает и не блокирует — он **выбрасывает маршрут**, и
+# наружу это выглядит как отсутствие http→https, а не как ошибка конфигурации. Ровно этим
+# обожглись в tracy.
+#
+# Копировать безопасно именно этот: `redirectScheme` не ссылается ни на объект Service, ни на
+# адрес, поэтому межнеймспейсным не считается ни в каком смысле.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Values.traefik.redirectMiddleware }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+{{- end }}

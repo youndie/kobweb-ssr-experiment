@@ -37,6 +37,9 @@ ssr:
 traefik:
   entryPoint: websecure
   certResolver: cloudflare
-  # The middleware that turns plain http into a redirect. It lives in the namespace, not here,
-  # because it is shared with everything else on the cluster.
+  # The middleware that turns plain http into a redirect. Traefik resolves it in the route's own
+  # namespace, so this chart ships its own copy rather than pointing at one next door: with
+  # `allowCrossNamespace` off a qualified name does not resolve, and Traefik then drops the route
+  # instead of complaining. Set to false where the namespace already has one under this name.
   redirectMiddleware: redirect-to-https
+  createRedirectMiddleware: true
