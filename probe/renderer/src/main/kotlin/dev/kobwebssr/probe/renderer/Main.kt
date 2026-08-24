@@ -19,7 +19,8 @@ import java.util.concurrent.Executors
  *
  * Protocol, deliberately the smallest thing that works:
  *
- *     GET /render?path=%2Fsome%2Fpage   ->  200 text/html   the snapshot
+ *     GET /render?path=%2Fsome%2Fpage[&query=...][&locale=...]
+ *                                       ->  200 text/html   the snapshot
  *                                          502 text/plain  render failed, reason in the body
  *     GET /health                       ->  200 text/plain
  *     GET /stats                        ->  200 text/plain  queue and timing counters
@@ -41,10 +42,15 @@ fun main(args: Array<String>) {
             exchange.reply(400, "text/plain", "missing 'path'")
             return@createContext
         }
-        when (val result = pool.render(path)) {
+        val request = RenderPool.Request(
+            path = path,
+            query = exchange.query("query"),
+            locale = exchange.query("locale"),
+        )
+        when (val result = pool.render(request)) {
             is RenderOutcome.Ok -> exchange.reply(200, "text/html; charset=utf-8", result.html)
             is RenderOutcome.Failed -> {
-                println("[renderer] $path REJECTED: ${result.reason}")
+                println("[renderer] ${request.describe()} REJECTED: ${result.reason}")
                 exchange.reply(502, "text/plain", result.reason)
             }
         }

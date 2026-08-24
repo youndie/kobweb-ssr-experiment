@@ -10,6 +10,9 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicLong
 
+internal fun RenderPool.Request.describe(): String =
+    path + (query?.let { "?$it" } ?: "") + (locale?.let { " [$it]" } ?: "")
+
 sealed interface RenderOutcome {
     data class Ok(val html: String) : RenderOutcome
     data class Failed(val reason: String) : RenderOutcome
@@ -37,7 +40,15 @@ class RenderPool(target: String, private val workers: Int, private val instrumen
     private val renderNanos = AtomicLong()
     private val maxDepth = AtomicLong()
 
-    private class Job(val path: String, val enqueuedAt: Long, val result: CompletableFuture<RenderOutcome>)
+    /**
+     * @param query the visitor's query string, already stripped by the plugin of anything the
+     *   renderer reserves for itself.
+     * @param locale the visitor's language, applied to the browser context so it reaches the page
+     *   both as `Accept-Language` and as `navigator.language`.
+     */
+    class Request(val path: String, val query: String?, val locale: String?)
+
+    private class Job(val request: Request, val enqueuedAt: Long, val result: CompletableFuture<RenderOutcome>)
 
     init {
         repeat(workers) { index ->
@@ -45,8 +56,8 @@ class RenderPool(target: String, private val workers: Int, private val instrumen
         }
     }
 
-    fun render(path: String): RenderOutcome {
-        val job = Job(path, System.nanoTime(), CompletableFuture())
+    fun render(request: Request): RenderOutcome {
+        val job = Job(request, System.nanoTime(), CompletableFuture())
         queued.incrementAndGet()
         if (!queue.offer(job)) {
             rejected.incrementAndGet()
@@ -78,14 +89,14 @@ class RenderPool(target: String, private val workers: Int, private val instrumen
                     waitNanos.addAndGet(System.nanoTime() - job.enqueuedAt)
                     val startedAt = System.nanoTime()
                     val outcome = try {
-                        snapshot(browser, target, job.path)
+                        snapshot(browser, target, job.request)
                     } catch (e: Exception) {
                         RenderOutcome.Failed("render threw: ${e.message}")
                     }
                     renderNanos.addAndGet(System.nanoTime() - startedAt)
                     completed.incrementAndGet()
                     if (outcome is RenderOutcome.Ok) {
-                        println("[renderer] ${job.path} -> ${outcome.html.length} chars in ${(System.nanoTime() - startedAt) / 1_000_000}ms (worker $index)")
+                        println("[renderer] ${job.request.describe()} -> ${outcome.html.length} chars in ${(System.nanoTime() - startedAt) / 1_000_000}ms (worker $index)")
                     }
                     job.result.complete(outcome)
                 }
@@ -93,14 +104,23 @@ class RenderPool(target: String, private val workers: Int, private val instrumen
         }
     }
 
-    private fun snapshot(browser: Browser, target: String, path: String): RenderOutcome {
-        browser.newContext(
-            Browser.NewContextOptions().setExtraHTTPHeaders(mapOf(BYPASS_HEADER to "1")),
-        ).use { context ->
+    private fun snapshot(browser: Browser, target: String, request: Request): RenderOutcome {
+        val options = Browser.NewContextOptions().setExtraHTTPHeaders(mapOf(BYPASS_HEADER to "1"))
+        // Playwright's locale drives both the `Accept-Language` header and `navigator.language`,
+        // so one setting covers what the server sees and what the page sees. Setting the header by
+        // hand would cover only the first, and the divergence would show up as a page that renders
+        // in the right language for the crawler and the wrong one for the reader.
+        request.locale?.let { options.setLocale(it) }
+        browser.newContext(options).use { context ->
             context.newPage().use { page ->
                 val errors = mutableListOf<String>()
                 page.onPageError { errors += it }
-                page.navigate("$target$path?_kobwebIsExporting=true&_kobwebColorModeStrategy=BOTH")
+                // The visitor's query comes first and the export flags last, so a flag can never be
+                // overridden by whatever was in the URL. The plugin strips them too; this is the
+                // second lock on the same door, because the cost of it failing is a cached page
+                // rendered under someone else's flags.
+                val visitorQuery = request.query?.takeIf { it.isNotEmpty() }?.plus("&") ?: ""
+                page.navigate("$target${request.path}?${visitorQuery}_kobwebIsExporting=true&_kobwebColorModeStrategy=BOTH")
                 page.bakeStyleSheets()
                 page.embedComposedState()
                 if (instrumentHydration) page.embedHydrationProbe()

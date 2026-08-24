@@ -27,9 +27,29 @@ interface PageRenderer {
 }
 
 /**
+ * What the renderer is asked to produce, and everything of the visitor's request that reaches it.
+ *
+ * **M5-02.** Until this milestone the only field was [path], and that was the defect: the renderer
+ * built its own URL and its own browser context, so a page reading `?q=` or the visitor's language
+ * was rendered for a request nobody had made — and the answer came back with status 200.
+ *
+ * [cacheKey] is on this class rather than in the cache on purpose. Whatever varies the render must
+ * vary the key, and keeping the two in one place is what stops the next field being added to one
+ * and forgotten in the other.
+ *
  * @param path the path as the visitor asked for it, leading slash included, query string excluded.
+ * @param query the visitor's raw query string, without the leading `?`, already stripped of
+ *   anything the renderer reserves for itself.
+ * @param locale the visitor's preferred language, or null. Reaches the render as both the
+ *   `Accept-Language` header and `navigator.language`.
  */
-data class RenderRequest(val path: String)
+data class RenderRequest(
+    val path: String,
+    val query: String? = null,
+    val locale: String? = null,
+) {
+    val cacheKey: String get() = "$path\u0000${query.orEmpty()}\u0000${locale.orEmpty()}"
+}
 
 sealed interface RenderResult {
     data class Rendered(val html: String) : RenderResult

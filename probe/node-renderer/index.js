@@ -90,9 +90,13 @@ function rejectionReason(document) {
   return null;
 }
 
-async function render(target, path, settleMs, allowIncomplete) {
-  const url = `${target}${path}?_kobwebIsExporting=true&_kobwebColorModeStrategy=BOTH`;
-  const response = await fetch(url, { headers: { [BYPASS_HEADER]: '1' } });
+async function render(target, request, settleMs, allowIncomplete) {
+  // The visitor's query first, the export flags last, so nothing in the URL can override a flag.
+  const visitorQuery = request.query ? `${request.query}&` : '';
+  const url = `${target}${request.path}?${visitorQuery}_kobwebIsExporting=true&_kobwebColorModeStrategy=BOTH`;
+  const headers = { [BYPASS_HEADER]: '1' };
+  if (request.locale) headers['Accept-Language'] = request.locale;
+  const response = await fetch(url, { headers });
   const shell = await response.text();
 
   const virtualConsole = new VirtualConsole();
@@ -105,7 +109,17 @@ async function render(target, path, settleMs, allowIncomplete) {
     resources: 'usable',
     pretendToBeVisual: true,
     virtualConsole,
-    beforeParse: installPolyfills,
+    beforeParse: (window) => {
+      installPolyfills(window);
+      // Playwright sets the locale on the browser context, which covers the request header and
+      // `navigator.language` together. jsdom has no such knob, so the header goes on the fetch
+      // above and the navigator property has to be redefined here — two places instead of one,
+      // and a third thing this renderer can get out of step with a browser on.
+      if (request.locale) {
+        Object.defineProperty(window.navigator, 'language', { get: () => request.locale });
+        Object.defineProperty(window.navigator, 'languages', { get: () => [request.locale] });
+      }
+    },
   });
 
   try {
@@ -156,23 +170,30 @@ function main() {
 
     const path = url.searchParams.get('path');
     if (!path) return reply(400, 'text/plain', "missing 'path'");
+    const request = {
+      path,
+      query: url.searchParams.get('query'),
+      locale: url.searchParams.get('locale'),
+    };
+    const describe = path + (request.query ? `?${request.query}` : '') +
+      (request.locale ? ` [${request.locale}]` : '');
 
     const startedAt = Date.now();
     try {
-      const result = await render(target, path, settleMs, allowIncomplete);
+      const result = await render(target, request, settleMs, allowIncomplete);
       const tookMs = Date.now() - startedAt;
       stats.completed += 1;
       stats.renderMs += tookMs;
       if (result.ok) {
-        console.log(`[node-renderer] ${path} -> ${result.html.length} chars in ${tookMs}ms`);
+        console.log(`[node-renderer] ${describe} -> ${result.html.length} chars in ${tookMs}ms`);
         return reply(200, 'text/html; charset=utf-8', result.html);
       }
       stats.failed += 1;
-      console.log(`[node-renderer] ${path} REJECTED: ${result.reason}`);
+      console.log(`[node-renderer] ${describe} REJECTED: ${result.reason}`);
       return reply(502, 'text/plain', result.reason);
     } catch (e) {
       stats.failed += 1;
-      console.log(`[node-renderer] ${path} FAILED: ${e.message}`);
+      console.log(`[node-renderer] ${describe} FAILED: ${e.message}`);
       return reply(502, 'text/plain', `render failed: ${e.message}`);
     }
   });

@@ -45,9 +45,11 @@ class ProbeServerPlugin : KobwebServerPlugin {
         // what it should look like. That is a statement by whoever wrote the page, not an inference.
         SsrRoute("/ssr", ignores = RequestContext.entries.toSet()),
         // Not localised, so the language header cannot change it — but it is not declared free of
-        // the rest, so a query string or a cookie still stops it being served from a render that
-        // never saw them.
+        // the rest, so a cookie still stops it being served from a render that never saw one.
         SsrRoute("/state", ignores = setOf(RequestContext.LanguagePreference)),
+        // Reads its own query string and the visitor's language, and declares neither ignorable.
+        // Since M5-02 both of those reach the render, so it is served rather than refused.
+        SsrRoute("/echo"),
     )
 
     private data class SsrRoute(val path: String, val ignores: Set<RequestContext> = emptySet())
@@ -74,7 +76,7 @@ class ProbeServerPlugin : KobwebServerPlugin {
                 // Refusing is more expensive than rendering and it is the only honest option
                 // available today: a silently wrong page is worse than no server rendering at all.
                 // The route-level opt-out is a statement by whoever wrote the page, not a guess.
-                val dropped = call.droppedRequestContext() - route.ignores
+                val dropped = call.droppedRequestContext() - route.ignores - CARRIED_TO_RENDER
                 if (dropped.isNotEmpty()) {
                     application.log.info(
                         "[ssr-probe] not rendering $path: the request carries " +
@@ -92,8 +94,9 @@ class ProbeServerPlugin : KobwebServerPlugin {
                 // interceptors and there is nobody left to serve the renderer's own fetch, so the
                 // whole thing waits for its own timeouts. Measured before this line existed: eight
                 // concurrent requests all took exactly the client timeout.
+                val renderRequest = call.toRenderRequest(path)
                 val result = withContext(Dispatchers.IO) {
-                    cache.getOrRender(path) { renderer.render(RenderRequest(path)) }
+                    cache.getOrRender(renderRequest.cacheKey) { renderer.render(renderRequest) }
                 }
                 when (result) {
                     is RenderResult.Rendered -> {
@@ -157,7 +160,19 @@ class ProbeServerPlugin : KobwebServerPlugin {
 const val BYPASS_HEADER = "X-Kobweb-Ssr-Bypass"
 
 /**
- * The kinds of request context a render throws away.
+ * The kinds of request context that reach the render since **M5-02**, and therefore no longer
+ * cause a refusal.
+ *
+ * Cookies and credentials are deliberately not here. Forwarding them would make every render
+ * user-specific, which means either not caching at all — 0.6 s per request per visitor — or
+ * caching per user, where one wrong key hands one visitor another's page. Kilua draws the same
+ * line and says so: authenticated content is not supported. Refusing is the honest state until
+ * there is a design for it.
+ */
+private val CARRIED_TO_RENDER = setOf(RequestContext.QueryString, RequestContext.LanguagePreference)
+
+/**
+ * The kinds of request context a render can throw away.
  *
  * Kinds rather than a single flag, and the reason is not tidiness. Almost every browser sends
  * `Accept-Language`, so a one-bit "this route ignores the request" opt-out would refuse practically
@@ -171,6 +186,35 @@ private enum class RequestContext(val description: String) {
     Cookies("cookies"),
     Credentials("credentials"),
     LanguagePreference("a language preference"),
+}
+
+/**
+ * Collects the parts of the request that the renderer knows how to reproduce.
+ *
+ * Anything the renderer reserves for itself is stripped from the visitor's query string rather
+ * than passed through: `_kobwebIsExporting` and `_kobwebColorModeStrategy` change how the page
+ * renders, so leaving them under the visitor's control would let a URL decide what the server
+ * produces and then have that cached for everyone.
+ */
+private fun ApplicationCall.toRenderRequest(path: String): RenderRequest {
+    val query = request.queryParameters.entries()
+        .filterNot { it.key.startsWith("_kobweb") }
+        .flatMap { entry -> entry.value.map { entry.key to it } }
+        .sortedBy { it.first }
+        .joinToString("&") { (key, value) ->
+            "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
+        }
+    return RenderRequest(
+        path = path,
+        query = query.ifEmpty { null },
+        // Only the first, highest-weighted tag: the browser context takes one locale, and keeping
+        // the whole header in the cache key would split the cache by a preference nobody reads.
+        locale = request.headers[HttpHeaders.AcceptLanguage]
+            ?.substringBefore(',')
+            ?.substringBefore(';')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() },
+    )
 }
 
 /** Names what this particular request carries that would not survive a render. */

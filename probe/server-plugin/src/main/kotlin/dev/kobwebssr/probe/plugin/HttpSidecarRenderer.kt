@@ -8,6 +8,8 @@ import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 
+private fun String.urlEncoded(): String = URLEncoder.encode(this, StandardCharsets.UTF_8)
+
 /**
  * Talks to the renderer sidecar over HTTP.
  *
@@ -24,10 +26,14 @@ class HttpSidecarRenderer(
         .build()
 
     override fun render(request: RenderRequest): RenderResult {
-        val encoded = URLEncoder.encode(request.path, StandardCharsets.UTF_8)
+        val query = buildString {
+            append("path=").append(request.path.urlEncoded())
+            request.query?.takeIf { it.isNotEmpty() }?.let { append("&query=").append(it.urlEncoded()) }
+            request.locale?.let { append("&locale=").append(it.urlEncoded()) }
+        }
         return try {
             val response = client.send(
-                HttpRequest.newBuilder(URI.create("$baseUrl/render?path=$encoded"))
+                HttpRequest.newBuilder(URI.create("$baseUrl/render?$query"))
                     .timeout(timeout)
                     .GET()
                     .build(),
