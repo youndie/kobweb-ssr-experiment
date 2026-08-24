@@ -72,7 +72,10 @@ assert_fell_back() { if [[ "$2" -lt 20000 ]]; then ok "$1"; else bad "$1" "got $
 
 start_site() {
   ./gradlew :site:kobwebStop --console=plain >/dev/null 2>&1
-  if ! ./gradlew :site:kobwebStart "$@" --console=plain > "$LOG_DIR/start.log" 2>&1; then
+  # RELEASE here as well as in the export above. Passing it to only one of them is what made the
+  # byte-identity check fail the first time: the export had no live-reload widget and the running
+  # site did, so the renderer faithfully reproduced a page the export never contained.
+  if ! ./gradlew :site:kobwebStart -PkobwebBuildTarget=RELEASE "$@" --console=plain > "$LOG_DIR/start.log" 2>&1; then
     echo "could not start the site:"; tail -20 "$LOG_DIR/start.log"; exit 1
   fi
   # Carries the bypass header on purpose. Since M5-04 every page route is server-rendered, so a
@@ -107,7 +110,11 @@ fi
 # produced a confident false positive.
 echo "exporting with the plugin off…"
 rm -rf site/.kobweb/server/plugins/* site/.kobweb/site
-if ! ./gradlew :site:kobwebExport -PkobwebReuseServer=false -PkobwebEnv=DEV -PkobwebExportLayout=STATIC \
+# RELEASE, matching what the deployment ships. Left on the default the suite would be exercising
+# a client that polls /api/kobweb-status for live reload while the deployed one does not — the two
+# paths differing in exactly the place nobody looks.
+if ! ./gradlew :site:kobwebExport -PkobwebReuseServer=false -PkobwebEnv=DEV \
+     -PkobwebBuildTarget=RELEASE -PkobwebExportLayout=STATIC \
      --console=plain > "$LOG_DIR/export.log" 2>&1; then
   echo "export failed:"; tail -30 "$LOG_DIR/export.log"; exit 1
 fi

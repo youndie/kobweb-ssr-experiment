@@ -14,8 +14,14 @@ export JAVA_HOME
 echo "== gradle: export the site and build the renderer"
 ( cd probe
   ./gradlew --console=plain :renderer:installDist
+  # kobwebBuildTarget=RELEASE, and it is not optional. The export refuses to run with env=PROD —
+  # it always spins up a dev server to snapshot against — and the build target then defaults to
+  # DEBUG, which generates a client that opens an EventSource on /api/kobweb-status for live
+  # reload. In production nothing serves that, so every page load ended in a console 404. It also
+  # shrinks the shell from 1877 bytes to 515.
   ./gradlew --console=plain :site:kobwebExport \
-    -PprobePlugin -PkobwebReuseServer=false -PkobwebEnv=DEV -PkobwebExportLayout=FULLSTACK
+    -PprobePlugin -PkobwebReuseServer=false -PkobwebEnv=DEV -PkobwebBuildTarget=RELEASE \
+    -PkobwebExportLayout=FULLSTACK
   ./gradlew --console=plain :site:kobwebStop >/dev/null 2>&1 || true
   # The export leaves the pre-rendered pages behind; the image must not carry them. Removed here
   # rather than in the Dockerfile so that a `docker build` by hand cannot forget.
