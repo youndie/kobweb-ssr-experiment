@@ -489,6 +489,70 @@ CSSOM и нормализации пробелов вокруг комбинат
 через собственный `CustomStyle` в Silk. Гипотеза: дело в том, кто и когда получает `scopeElement.sheet`.
 Проверять в M2-05; до ответа считать это неизвестной причиной, а не подтверждённой.
 
+### 1.10 M3: состояние доезжает, гидратация — нет
+
+Стенд тот же. Клиентская сторона проверялась настоящим браузером на серверно отрендеренной
+странице, а не рассуждением.
+
+| Факт | Где проверено |
+|---|---|
+| **`rememberSaveable` переживает границу, `remember` — нет, и оба видны на одной странице.** Сервер отрендерил `/state` со своим идентификатором экземпляра `565317`; в браузере после загрузки `saveable` показывает `saveable-from-565317` (серверный), `plain` — `plain-from-565903` (клиентский, пересчитан), `instance` — `565903` | `probe/site/.../pages/State.kt`, чтение DOM в браузере |
+| В разметку уезжает **только** сохраняемое значение: `window.KOBWEB_SSR_STATE = "{\"1bgb6qms0i1v9\":[{\"t\":\"s\",\"v\":\"saveable-from-565317\"}]}"`. Значения из обычного `remember` в состоянии отсутствуют | тот же прогон |
+| Состояние едет **внутри** HTML, а не рядом с ним: клиенту оно нужно до запуска бандла | `probe/renderer/.../RenderPool.kt`, `embedComposedState` |
+| **Kobweb действительно сносит серверное поддерево: 11 узлов удалено, первое удаление через 312 мс** после разбора `<head>`. Итоговый корень содержит те же 7 элементов, что прислал сервер | зонд-наблюдатель, внедряемый рендерером по флагу `--instrument-hydration` |
+| Гидратация «не сносить, а переписать поверх» **невозможна снаружи**: `DomNodeWrapper.insert` умеет только `insertBefore` и `appendChild`, а `factory` в `TagElement` всегда создаёт новый элемент через `elementBuilder.create()`. Композиция не усыновляет существующие узлы ни при каких условиях | `compose-multiplatform` v1.11.1, `DomApplier.kt:45`, `dom/Base.kt` |
+| Сам снос живёт в **генерируемом** `main.kt`, то есть в шаблоне Gradle-плагина Kobweb, а не в чём-то, до чего дотягивается серверный плагин | `varabyte/kobweb`, `.../templates/MainTemplate.kt` |
+| Маршрут страницы Kobweb берёт из **имени файла**, а не из имени функции | см. следствие 3 |
+
+**Следствие 1. D3 подтверждено, и подтверждено вместе со своей ценой.** Перенос состояния работает
+на существующем примитиве Compose, без своего сериализатора, и приносит правильную дисциплину:
+через границу едет то, что автор пометил `rememberSaveable`, а остальное пересчитывается. Второе —
+не дефект и не «доделаем позже»: гарантировать произвольное состояние значит сериализовать
+замыкания, а это компиляторный проход, которого у Compose нет (§1.3, следствие про Qwik).
+
+**Правка к D3.** В M1 в шов было заложено поле `RenderResult.state` — «чтобы в M3 не пришлось
+менять шов». M3 им не воспользовалась: состояние обязано лежать в документе, иначе клиент не
+увидит его до запуска бандла, и второй канал был бы копией. Поле убрано, а не оставлено пустым:
+объявленный канал, в который никто не пишет, читается как поддерживаемая возможность. Заодно это
+ответ на вопрос, чего стоит закладываться на будущее в интерфейсе — здесь угадать не удалось.
+
+**Следствие 2. D5 неисполнимо снаружи, и это не «пока не сделали».** Настоящая гидратация требует,
+чтобы композиция взяла уже стоящий узел вместо создания нового. `ElementBuilder.create()` не умеет
+вернуть существующий элемент, а аппликер не умеет узнать, какой именно взять. Плюс сам снос корня
+живёт в шаблоне генератора Kobweb. Обе половины лежат вне досягаемости серверного плагина, и ни
+одна не обходится настройкой.
+
+Измеренная цена того, что есть: **11 удалённых узлов и окно в 312 мс**, в течение которого
+посетитель видит серверную страницу, после чего она заменяется на такую же. На странице, где
+серверный и клиентский результат совпадают, это перерисовка; там, где расходятся, — моргание.
+Это ровно то, что Kilua называет «hydration implemented in a simple way», и то, что мейнтейнер
+Kobweb в #113 называет «not that bad of an experience» — теперь с числом.
+
+**Следствие 3. Это усиливает просьбу в `#compose-ssr`, и меняет её адрес.** Просить надо не
+`renderToString` — его и так собираются делать, и он самая лёгкая половина. Просить надо
+**пропускать мутации узла через `Applier`** или дать построителю вернуть существующий элемент. Это
+одна правка в `compose-html`, и она разблокирует гидратацию всем сразу: и Kobweb #113, и «replace
+the rendered content» у Kilua упираются в неё же.
+
+**Следствие 4, дешёвое, но дорого обошедшееся: маршрут берётся из имени файла.** Страница
+называлась `SsrStatePage.kt` и отвечала на `/ssr-state-page`, а плагин спрашивал `/ssr-state`.
+Catch-all отдал вместо неё главную, рендерер её отрендерил, вернулось 70131 байт валидного HTML —
+и ни одна проверка не сработала, потому что страница была настоящая, просто не та. Проверка M1-07
+такое не ловит и не должна: разметка корректна. Ловится только тем, что в отрендеренном не
+оказалось ожидаемого содержимого.
+
+**Следствие 5. Зонд, поставленный не в тот момент, показал ноль.** Первая версия наблюдателя
+включалась на `DOMContentLoaded` и отчиталась «0 удалений, 0 добавлений» — а бандл Kobweb успевает
+снести и перерисовать дерево **до** этого события. Ноль выглядел как «сноса нет», то есть как
+хорошая новость. Наблюдатель переставлен на разбор `<head>`; и считать в нём надо **удаления**, а
+не добавления: добавления делает ещё и сам разборщик HTML, поэтому число 27 в отчёте зонда
+загрязнено, а 11 — нет.
+
+**M3-02 отложена, с причиной.** Граница «серверное / интерактивное» в типах (D4) окупается только
+когда по ту сторону границы что-то есть — то есть при частичной гидратации. Пока клиент в любом
+случае перестраивает всё дерево целиком, такая граница описывала бы механизм, которого нет.
+Проектировать API против неработающего механизма — это способ получить и API, и механизм неверными.
+
 ---
 
 ## 2. Решения
@@ -576,6 +640,14 @@ HTTP нет вообще; до неё D2 считается принятым у�
 
 ### D5. Гидратация — сопоставление, а не снос дерева *(отклонение от текущего поведения Kobweb)*
 
+**Вердикт M3 (2026-08-24): неисполнимо снаружи, решение остаётся в силе как требование к
+апстриму, а не как задача этого проекта.** Композиция не умеет усыновить существующий узел
+(`ElementBuilder.create()` всегда создаёт новый, аппликер умеет только вставить и удалить), а сам
+снос корня живёт в шаблоне генератора Kobweb. Измеренная цена текущего поведения — 11 удалённых
+узлов и окно 312 мс (§1.10). Открытый вопрос 1 закрыт отрицательно: сопоставлять нечем, и вариант
+«(а) сопоставлять только структуру» не существует — при непустом корне композиция не переписывает,
+а вставляет рядом.
+
 Kobweb сегодня сносит `_kobweb-root` целиком и рендерит заново (§1.3). При SSR это хуже, чем при
 экспорте: страница, пришедшая с сервера уже с данными, мигнёт и перерисуется.
 
@@ -629,11 +701,11 @@ STATIC — **проигрывает**, потому что специфично�
 `ApplicationCallPipeline.Plugins` выигрывает в обеих раскладках. Остаточный риск переехал в
 Открытый вопрос 4.
 
-**Открытый вопрос 1. Чем сопоставлять дерево при гидратации (D5).** Аппликер видит структуру, но
-не атрибуты (§1.2). Варианты: (а) сопоставлять только структуру, атрибуты перезаписывать вслепую —
-дёшево, мерцания меньше, но не ноль; (б) на сервере класть в разметку разметочные маркеры и
-сверяться по ним; (в) дождаться, пока `compose-html` сможет отдавать модель узла. Гипотеза: (а)
-достаточно для первой версии. Решается в M3, на реальной странице, по числу перерисованных узлов.
+**Открытый вопрос 1 — закрыт отрицательно в M3 (§1.10).** Сопоставлять нечем, и вариант «(а)
+сопоставлять только структуру» оказался несуществующим: композиция не переписывает содержимое
+непустого корня, она вставляет своё рядом, потому что `DomNodeWrapper.insert` умеет только
+`insertBefore` и `appendChild`, а фабрика узла всегда создаёт новый элемент. Остаётся вариант (в) —
+изменение в `compose-html`, — и он переехал в просьбу к апстриму (§5).
 
 **Открытый вопрос 2. Сколько стоит процесс Chromium против процесса Node на одну и ту же
 страницу.** Ответ определяет, делается ли M2 вообще. Гипотеза: разница по памяти велика, по
@@ -702,14 +774,21 @@ M1-06 вместе с остальным — отдельно, с плагино
 > already published and is an empty jar, so a JVM source set depending on `html-core` resolves
 > today and gives you nothing — worth knowing whether that's intentional.
 >
-> **3. On hydration, one concrete observation rather than a request.** Today attributes, inline
-> styles, classes and listeners are written straight into the `org.w3c.dom.Element` inside
+> **3. On hydration, one concrete observation and one small ask.** Today attributes, inline styles,
+> classes and listeners are written straight into the `org.w3c.dom.Element` inside
 > `DomElementWrapper`, in the `update { }` block of `TagElement` — they never pass through the
-> `Applier`. So a custom `Applier` sees `insert`/`remove`/`move` and nothing else, which means
-> nobody outside compose-html can diff a composition against an existing DOM tree. If a JVM target
-> is on the table anyway, routing node mutations through the `Applier` (or exposing the node model)
-> would be the single change that unblocks real hydration for everyone downstream — Kobweb #113 and
-> Kilua's "replace the rendered content" are the same wall.
+> `Applier`. And `DomNodeWrapper.insert` only ever calls `insertBefore`/`appendChild`, while the
+> factory in `TagElement` always makes a fresh element, so a composition can never adopt a node
+> that is already in the document. Between them that means nobody outside compose-html can hydrate:
+> the only option left is to throw the server's tree away and rebuild it.
+>
+> I measured what that costs on a server-rendered Kobweb page: 11 nodes removed, the first removal
+> 312 ms after the head is parsed, and the replacement is byte-identical to what it replaced.
+>
+> So the ask is not `renderToString` — that part is already on your list and it is the easier half.
+> The ask is either routing node mutations through the `Applier`, or letting `ElementBuilder`
+> return an element that already exists. Either one unblocks hydration for everything downstream at
+> once: Kobweb #113 and Kilua's "replace the rendered content" are the same wall.
 >
 > Separately, and much smaller: is a CLA required for contributions to compose-multiplatform?
 > CONTRIBUTING.md doesn't mention one and I'd rather ask than find out mid-PR.
@@ -735,6 +814,8 @@ M1-06 вместе с остальным — отдельно, с плагино
 | kobweb-ssr (этот) | `probe/server-plugin/src/main/kotlin/dev/kobwebssr/probe/plugin/RenderCache.kt` — кэш и его рубильник |
 | kobweb-ssr (этот) | `probe/node-renderer/index.js` — вторая реализация шва, подпорки и их честность |
 | kobweb-ssr (этот) | `probe/node-renderer/README.md` — таблица покрытия CSSOM, по которой выбрана эмуляция |
+| kobweb-ssr (этот) | `probe/site/src/jsMain/kotlin/dev/kobwebssr/probe/SsrState.kt` — мост к `SaveableStateRegistry` |
+| kobweb-ssr (этот) | `probe/site/src/jsMain/kotlin/dev/kobwebssr/probe/pages/State.kt` — страница, на которой видно, что доезжает, а что нет |
 | kobweb-ssr (этот) | `probe/site/src/jsMain/kotlin/dev/kobwebssr/probe/pages/Ssr.kt` — страница со стилем Silk, на которой это меряется |
 | JetBrains/compose-multiplatform | `html/internal-html-core-runtime/src/jsMain/kotlin/org/jetbrains/compose/web/internal/runtime/DomApplier.kt` — аппликер и `DomNodeWrapper` |
 | JetBrains/compose-multiplatform | `html/internal-html-core-runtime/src/jsMain/kotlin/org/jetbrains/compose/web/renderComposable.kt` — сборка композиции, зашитый `DomApplier` |
