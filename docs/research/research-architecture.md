@@ -19,9 +19,21 @@ JVM-таргет `compose-html` от JetBrains и написать только 
 YouTrack), **принятые решения** и **риски**. Всё непроверенное названо гипотезой и говорит, где
 будет проверено.
 
-Дата съёма всех фактов — **2026-08-24**. Версии, к которым они привязаны: Compose Multiplatform
-**1.9.3**, Kobweb — `master` на коммите `Update Kobweb CLI version in the README to v0.9.22`
-(2026-08-19), Kilua — `main` на `616b7a3` (2026-08-17).
+Дата съёма всех фактов — **2026-08-24**. Версии, к которым они привязаны: Compose Multiplatform —
+тег **v1.11.1** (последний релиз; последнее опубликованное — `1.12.0-rc01`), Kobweb — `master` на
+коммите `Update Kobweb CLI version in the README to v0.9.22` (2026-08-19), Kilua — `main` на
+`616b7a3` (2026-08-17).
+
+**Правка, найденная при начале M0 (2026-08-24).** Здесь и в §1.2 было написано «1.9.3» — это
+неверно: 1.9.3 не последняя версия compose-html, последний релиз 1.11.1, а последнее
+опубликованное — 1.12.0-rc01. Ошибка не в поиске, а в способе чтения: список версий брался из
+HTML-листинга каталога Maven Central командой `tail`, а порядок в этом листинге не тот, который
+кажется, — «последние двенадцать строк» и «двенадцать самых новых версий» это разные множества.
+Правильный источник — `maven-metadata.xml` с полями `<latest>` и `<release>`. Все факты §1.2
+пересняты на v1.11.1 и подтвердились без изменений: `html/core/src/jsMain/.../dom/Base.kt` на теге
+**побайтово совпадает** с `master`, а `html-core-jvm` пуст (599 байт) и в 1.11.1, и в 1.12.0-rc01.
+То есть вывод не менялся, менялась только привязка. Правку стоит помнить не ради номера: любой
+факт вида «последняя версия такая-то», снятый листингом каталога, надо перепроверять метаданными.
 
 ---
 
@@ -69,7 +81,7 @@ API» — оказалась не тем вопросом; ответ на не�
 | Факт | Где проверено |
 |---|---|
 | `html/core/src` содержит **только** `jsMain` и `jsTest` | `JetBrains/compose-multiplatform`, `html/core/src` |
-| При этом `jvm()` в таргетах объявлен, и **опубликованный `html-core-jvm:1.9.3` существует и пуст**: jar на 599 байт, четыре записи, ни одного класса | `repo1.maven.org/maven2/org/jetbrains/compose/html/html-core-jvm/1.9.3/html-core-jvm-1.9.3.jar`; `html-core-1.9.3.module` (варианты `jvmApiElements-published`, `jvmRuntimeElements-published`) |
+| При этом `jvm()` в таргетах объявлен, и **опубликованный `html-core-jvm` существует и пуст**: jar на 599 байт, четыре записи, ни одного класса. Проверено на 1.11.1 и на 1.12.0-rc01 — в обеих одинаково | `repo1.maven.org/maven2/org/jetbrains/compose/html/html-core-jvm/1.11.1/html-core-jvm-1.11.1.jar`; `html-core-1.11.1.module` (варианты `jvmApiElements-published`, `jvmRuntimeElements-published`) |
 | `DomApplier` — `@ComposeWebInternalApi class`, то есть **не `internal`**, а `@RequiresOptIn`; финальный, `AbstractApplier<DomNodeWrapper>` | `html/internal-html-core-runtime/src/jsMain/kotlin/org/jetbrains/compose/web/internal/runtime/DomApplier.kt` |
 | `DomNodeWrapper` — `open class`, но его `node` типизирован `org.w3c.dom.Node` | там же |
 | `ElementBuilder` — `fun interface ElementBuilder<TElement : Element> { fun create(): TElement }`, публичный и реализуемый; реализация по умолчанию `ElementBuilderImplementation` (private) зовёт `document.createElement(tagName)` и `el.cloneNode()` | `html/core/src/jsMain/kotlin/org/jetbrains/compose/web/dom/Elements.kt:68` |
@@ -171,7 +183,7 @@ JetBrains — это не настройка Gradle, она уже сделан�
 | Blazor: компонент может во время выполнения узнать, где он исполняется и интерактивен ли он — `RendererInfo.Name` (`Static` / `Server` / `WebAssembly` / `WebView`), `RendererInfo.IsInteractive`, `AssignedRenderMode` | там же |
 | Qwik: слушатели сериализуются прямо в разметку — `<button on:click="./chunk.js#handler_symbol">`; Qwikloader ставит один глобальный слушатель; границы компонентов тоже сериализуются в HTML | [qwik.dev/docs/concepts/resumable](https://qwik.dev/docs/concepts/resumable/) |
 | Qwik: замыкания сериализуемы, **только если обёрнуты в QRL**, и делает это оптимизатор (компиляторный проход). Не сериализуются классы (`instanceof`, прототипы) и стримы | там же |
-| `androidx.compose.runtime.saveable` опубликован для jvm (desktop), js(ir), androidJvm и native — то есть `SaveableStateRegistry` доступен и на сервере, и в браузере | `repo1.maven.org/.../runtime-saveable/1.9.3/runtime-saveable-1.9.3.module` |
+| `androidx.compose.runtime.saveable` опубликован для jvm (desktop), js(ir), androidJvm и native — то есть `SaveableStateRegistry` доступен и на сервере, и в браузере | `repo1.maven.org/.../runtime-saveable/<version>/runtime-saveable-<version>.module`; снято на 1.9.3, на текущей версии не переснималось |
 
 **Следствие 1 (Blazor). Граница «серверное / интерактивное» должна быть в типах, и через неё
 должно проходить только сериализуемое.** Blazor выясняет это в рантайме и падает; но сама
@@ -435,7 +447,7 @@ Kobweb сегодня сносит `_kobweb-root` целиком и рендер
 >
 > **2. Would a JVM target change the public signatures of `AttrsScope` / `ElementScope` /
 > `DOMScope`, or is the plan to keep them typed by `org.w3c.dom.Element`?** This is the part that
-> decides whether third-party code can share source sets. Related: `html-core-jvm:1.9.3` is
+> decides whether third-party code can share source sets. Related: `html-core-jvm:1.11.1` is
 > already published and is an empty jar, so a JVM source set depending on `html-core` resolves
 > today and gives you nothing — worth knowing whether that's intentional.
 >
