@@ -4,6 +4,7 @@ compose-runtime = "1.12.0"
 kobweb = "0.25.1"
 kotlin = "2.4.10"
 kotlinx-serialization = "1.11.0"
+kotlinx-coroutines = "1.11.0"
 ktor = "3.5.0"
 jsoup = "1.22.2"
 playwright = "1.61.0"
@@ -15,6 +16,7 @@ kobweb-api = { module = "com.varabyte.kobweb:kobweb-api", version.ref = "kobweb"
 kobweb-core = { module = "com.varabyte.kobweb:kobweb-core", version.ref = "kobweb" }
 kobweb-server-plugin = { module = "com.varabyte.kobweb:kobweb-server-plugin", version.ref = "kobweb" }
 ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
 kobweb-silk = { module = "com.varabyte.kobweb:kobweb-silk", version.ref = "kobweb" }

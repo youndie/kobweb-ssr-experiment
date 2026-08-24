@@ -7,6 +7,9 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.util.pipeline.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.time.Duration
 
 /**
  * Two milestones live in one plugin, kept apart on purpose.
@@ -22,6 +25,11 @@ import io.ktor.util.pipeline.*
 class ProbeServerPlugin : KobwebServerPlugin {
     private val renderer: PageRenderer = HttpSidecarRenderer(
         baseUrl = System.getProperty(RENDERER_URL_PROPERTY) ?: "http://localhost:7899",
+    )
+
+    private val cache = RenderCache(
+        ttl = Duration.ofSeconds(System.getProperty(CACHE_TTL_PROPERTY)?.toLongOrNull() ?: 60),
+        enabled = System.getProperty(CACHE_ENABLED_PROPERTY)?.toBooleanStrictOrNull() ?: true,
     )
 
     /**
@@ -44,7 +52,17 @@ class ProbeServerPlugin : KobwebServerPlugin {
             val path = call.request.path()
 
             if (path in ssrRoutes) {
-                when (val result = renderer.render(RenderRequest(path))) {
+                // Off the Ktor pipeline thread, and this is not hygiene — it is the difference
+                // between working and deadlocking. Kobweb runs on Netty, the renderer fetches the
+                // page it is rendering *from this same server*, and both the render call and the
+                // JDK HTTP client are blocking. Occupy every event-loop thread with waiting
+                // interceptors and there is nobody left to serve the renderer's own fetch, so the
+                // whole thing waits for its own timeouts. Measured before this line existed: eight
+                // concurrent requests all took exactly the client timeout.
+                val result = withContext(Dispatchers.IO) {
+                    cache.getOrRender(path) { renderer.render(RenderRequest(path)) }
+                }
+                when (result) {
                     is RenderResult.Rendered -> {
                         call.respondText(result.html, ContentType.Text.Html)
                         finish()
@@ -82,11 +100,20 @@ class ProbeServerPlugin : KobwebServerPlugin {
             get("/ssr-probe/renderer-health") {
                 call.respondText(if (renderer.isHealthy()) "renderer: up" else "renderer: down")
             }
+            get("/ssr-probe/cache") {
+                call.respondText(cache.stats())
+            }
+            get("/ssr-probe/cache/clear") {
+                val path = call.request.queryParameters["path"]
+                call.respondText("invalidated ${cache.invalidate(path)} entr(y/ies)")
+            }
         }
     }
 
     companion object {
         const val RENDERER_URL_PROPERTY = "kobwebssr.renderer.url"
+        const val CACHE_ENABLED_PROPERTY = "kobwebssr.cache.enabled"
+        const val CACHE_TTL_PROPERTY = "kobwebssr.cache.ttl.seconds"
     }
 }
 

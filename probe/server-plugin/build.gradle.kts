@@ -10,6 +10,7 @@ dependencies {
     // `kobweb-server-plugin`, not `server-plugin` — see M0 notes.
     compileOnly(libs.kobweb.server.plugin)
     compileOnly(libs.ktor.server.core)
+    compileOnly(libs.kotlinx.coroutines.core)
 }
 
 kotlin {

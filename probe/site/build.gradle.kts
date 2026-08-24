@@ -14,6 +14,15 @@ kobweb {
         index {
             description.set("M0 probe: can a third-party server plugin intercept a page route?")
         }
+        server {
+            // Reachable in the plugin through System.getProperty. The cache switch is here rather
+            // than hard-coded because M1-06 has to measure both positions of it: a switch only ever
+            // observed in one position says nothing about what it does.
+            systemProperties.put(
+                "kobwebssr.cache.enabled",
+                providers.gradleProperty("ssrCache").orElse("true"),
+            )
+        }
     }
 }
 
