@@ -11,6 +11,13 @@ import java.time.Duration
 private fun String.urlEncoded(): String = URLEncoder.encode(this, StandardCharsets.UTF_8)
 
 /**
+ * Fragments that appear in the names of Netty's and Ktor's own threads. Matching by name is coarse
+ * and it is what is available: the plugin has no compile-time dependency on the server's internals,
+ * and a coarse check that fires is worth more than a precise one that needs one.
+ */
+private val EVENT_LOOP_THREADS = listOf("eventLoop", "nioEventLoop", "ktor-server")
+
+/**
  * Talks to the renderer sidecar over HTTP.
  *
  * Uses the JDK's own client rather than Ktor's on purpose. The `kobwebServerPlugin` configuration
@@ -26,6 +33,7 @@ class HttpSidecarRenderer(
         .build()
 
     override fun render(request: RenderRequest): RenderResult {
+        refuseToBlockTheEventLoop()
         val query = buildString {
             append("path=").append(request.path.urlEncoded())
             request.query?.takeIf { it.isNotEmpty() }?.let { append("&query=").append(it.urlEncoded()) }
@@ -46,6 +54,28 @@ class HttpSidecarRenderer(
             }
         } catch (e: Exception) {
             RenderResult.Failed("renderer unreachable at $baseUrl: ${e.message}")
+        }
+    }
+
+    /**
+     * **M5-08.** Refuses to run on a thread the server needs in order to answer.
+     *
+     * This call blocks, and the renderer it is waiting for fetches the page it is rendering from
+     * the very server whose thread this is. Occupy the event loop with waiting and there is nobody
+     * left to serve that fetch: measured before this was understood, eight concurrent requests all
+     * took exactly the client timeout, and from outside it read as "slow under load" rather than as
+     * a deadlock (research §1.8).
+     *
+     * The rule lived in a comment until now, which is to say it lived nowhere the day someone moved
+     * this call. Throwing turns a regression into a loud, safe failure: the caller treats it as a
+     * failed render, falls back to Kobweb, and logs the reason. Server rendering stops working
+     * visibly instead of hanging quietly.
+     */
+    private fun refuseToBlockTheEventLoop() {
+        val thread = Thread.currentThread().name
+        check(EVENT_LOOP_THREADS.none { thread.contains(it, ignoreCase = true) }) {
+            "render() was called on '$thread', which looks like a server event-loop thread. " +
+                "It blocks, and the renderer needs this server to answer it — see M5-08."
         }
     }
 

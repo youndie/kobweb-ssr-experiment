@@ -275,6 +275,34 @@ assert_eq "a repeat of the same request hits" "$(grep -o 'hits=[0-9]*' <<<"$STAT
 
 # --- result --------------------------------------------------------------------------------------
 
+# --- M5-06: a rebuilt site must not be served from the old cache ---------------------------------
+
+echo
+echo "M5-06 — the cache notices when the site changes"
+curl -sS -o /dev/null "http://localhost:$PORT_SITE/echo?q=stale"
+BEFORE=$(curl -sS "http://localhost:$PORT_SITE/ssr-probe/cache" | grep -o 'entries=[0-9]*')
+assert_eq "the page is cached" "$BEFORE" "entries=3"
+# Touching the bundle is what a redeploy looks like from the server's side.
+touch site/build/kotlin-webpack/js/developmentExecutable/probe.js
+sleep 1.2   # the fingerprint is checked at most once a second
+curl -sS -o /dev/null "http://localhost:$PORT_SITE/echo?q=stale"
+STATS=$(curl -sS "http://localhost:$PORT_SITE/ssr-probe/cache")
+assert_eq "the stale entries were discarded" "$(grep -o 'invalidations=[0-9]*' <<<"$STATS")" "invalidations=1"
+assert_eq "and the page was rendered again rather than served from before" \
+  "$(grep -o 'entries=[0-9]*' <<<"$STATS")" "entries=1"
+
+# --- M5-08: the rule about the event loop is enforced, not just written down ----------------------
+
+echo
+echo "M5-08 — blocking the event loop is refused"
+assert_contains "the guard exists in the shipped plugin" \
+  server-plugin/src/main/kotlin/dev/kobwebssr/probe/plugin/HttpSidecarRenderer.kt \
+  "refuseToBlockTheEventLoop"
+# The positive control: the guard must not be firing during normal operation, or every render in
+# this run has been silently falling back and every assertion above measured the wrong thing.
+assert_absent "and it is not firing in normal operation" \
+  site/.kobweb/server/logs/kobweb-server.log "which looks like a server event-loop thread"
+
 echo
 echo "-------------------------------------------------------"
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
