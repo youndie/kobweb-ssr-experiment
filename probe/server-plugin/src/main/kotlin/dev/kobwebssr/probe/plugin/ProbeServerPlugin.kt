@@ -33,29 +33,18 @@ class ProbeServerPlugin : KobwebServerPlugin {
     )
 
     /**
-     * Which paths get server-rendered, and whether each one may be rendered for a request that
-     * carries context the renderer throws away.
-     *
-     * Hard-coded for now, and that is a known gap rather than a simplification: Kobweb's KSP output
-     * already carries the real route table on the JVM as `FrontendData` (research §1.4), and
-     * wiring this to it is M5-04.
+     * **M5-04.** Discovered from the build's own route table rather than typed here. See
+     * [SsrRoutes] for what discovery does and does not remove.
      */
-    private val ssrRoutes = listOf(
-        // A constant page: nothing in it reads the request, so no part of the request can change
-        // what it should look like. That is a statement by whoever wrote the page, not an inference.
-        SsrRoute("/ssr", ignores = RequestContext.entries.toSet()),
-        // Not localised, so the language header cannot change it — but it is not declared free of
-        // the rest, so a cookie still stops it being served from a render that never saw one.
-        SsrRoute("/state", ignores = setOf(RequestContext.LanguagePreference)),
-        // Reads its own query string and the visitor's language, and declares neither ignorable.
-        // Since M5-02 both of those reach the render, so it is served rather than refused.
-        SsrRoute("/echo"),
-    )
-
-    private data class SsrRoute(val path: String, val ignores: Set<RequestContext> = emptySet())
+    private val discovery = SsrRoutes.discover()
+    private val ssrRoutes = discovery.routes
 
     override fun configure(application: Application) {
         application.log.info("[ssr-probe] plugin loaded: ${javaClass.name}")
+        application.log.info(
+            "[ssr-probe] server-rendering ${ssrRoutes.size} route(s) from ${discovery.source}: " +
+                ssrRoutes.joinToString { it.path },
+        )
 
         application.intercept(ApplicationCallPipeline.Plugins) {
             // The renderer's browser fetches the very page it is rendering from this same server.
@@ -181,7 +170,7 @@ private val CARRIED_TO_RENDER = setOf(RequestContext.QueryString, RequestContext
  * everything, which is how a guard stops guarding. Per kind, a page can truthfully say it is not
  * localised without also claiming it ignores its own query string.
  */
-private enum class RequestContext(val description: String) {
+enum class RequestContext(val description: String) {
     QueryString("a query string"),
     Cookies("cookies"),
     Credentials("credentials"),

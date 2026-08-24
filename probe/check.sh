@@ -75,7 +75,13 @@ start_site() {
   if ! ./gradlew :site:kobwebStart "$@" --console=plain > "$LOG_DIR/start.log" 2>&1; then
     echo "could not start the site:"; tail -20 "$LOG_DIR/start.log"; exit 1
   fi
-  for _ in $(seq 1 30); do curl -sf "http://localhost:$PORT_SITE/" -o /dev/null 2>/dev/null && return; sleep 1; done
+  # Carries the bypass header on purpose. Since M5-04 every page route is server-rendered, so a
+  # plain readiness probe would trigger a render and leave an entry in the cache — which the cache
+  # assertions below would then count. A liveness check must not change what it is checking.
+  for _ in $(seq 1 30); do
+    curl -sf -H 'X-Kobweb-Ssr-Bypass: 1' "http://localhost:$PORT_SITE/" -o /dev/null 2>/dev/null && return
+    sleep 1
+  done
   echo "site never answered"; exit 1
 }
 
@@ -140,6 +146,15 @@ assert_contains "fullstack layout: routing { } beats the catch-all" "$LOG_DIR/b"
 fetch "$LOG_DIR/b" "http://localhost:$PORT_SITE/collide2" >/dev/null
 assert_contains "fullstack layout: the interceptor wins too" "$LOG_DIR/b" "early intercept"
 
+# --- M5-04: the route table comes from the build ------------------------------------------------
+
+echo
+echo "M5-04 — routes discovered rather than typed"
+assert_contains "the plugin discovered its routes from the build metadata" \
+  site/.kobweb/server/logs/kobweb-server.log "kobweb/metadata/frontend.json"
+assert_contains "a page nobody declared is now server-rendered" \
+  site/.kobweb/server/logs/kobweb-server.log "/echo"
+
 # --- M1: the page comes back rendered ----------------------------------------------------------
 
 echo
@@ -169,6 +184,11 @@ open(sys.argv[2], 'w').write(re.sub(r'<script\b.*?</script>', '', html, flags=re
 PY
 assert_contains "content survives with every script removed" "$LOG_DIR/ssr-nojs" "COMPOSED MARKER"
 assert_contains "styles survive with every script removed" "$LOG_DIR/ssr-nojs" ".ssr-marker"
+
+# `/` was never in the hand-written list, so it is only served now because discovery found it.
+fetch "$LOG_DIR/home" "http://localhost:$PORT_SITE/" >/dev/null
+assert_contains "the home page renders although nobody declared it" "$LOG_DIR/home" "RENDERED BY THE CLIENT"
+
 
 # --- M3: what crosses the boundary --------------------------------------------------------------
 
