@@ -1,0 +1,27 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kobweb-ssr
+spec:
+  entryPoints: [{{ .Values.traefik.entryPoint }}]
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.hostname }}`)
+      services:
+        - name: kobweb-ssr
+          port: 80
+  tls:
+    certResolver: {{ .Values.traefik.certResolver }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kobweb-ssr-web
+spec:
+  entryPoints: [web]
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.hostname }}`)
+      middlewares:
+        - name: {{ .Values.traefik.redirectMiddleware }}
+      services: []

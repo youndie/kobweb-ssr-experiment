@@ -1,0 +1,42 @@
+# Defaults. The environment's own values live in the infra repository, next to the deploy workflow,
+# the same split katcher, metrik and tracy use.
+
+# Required. An empty hostname renders `Host(``)`, which Traefik accepts and which then matches
+# nothing at all — a route that is present, valid and silently dead. The template fails instead.
+hostname: ""
+
+image:
+  repository: ghcr.io/youndie/kobweb-ssr-experiment
+  # Both containers are versioned together on purpose: the renderer fetches pages from the site
+  # beside it and bakes its stylesheets, so a mismatched pair produces pages that look plausible
+  # and are wrong in ways nothing checks.
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+site:
+  resources:
+    requests: { cpu: 100m, memory: 320Mi }
+    limits: { memory: 768Mi }
+
+renderer:
+  # Pool size is bounded by memory rather than cores: roughly 342 MiB per worker on top of about
+  # 115 MiB fixed, measured at 1, 2 and 4 workers. One worker is enough for a demo; raising this
+  # without raising the memory limit buys nothing but an OOMKill.
+  workers: 1
+  resources:
+    requests: { cpu: 200m, memory: 640Mi }
+    limits: { memory: 1280Mi }
+
+ssr:
+  cache:
+    enabled: true
+    ttlSeconds: 300
+
+traefik:
+  entryPoint: websecure
+  certResolver: cloudflare
+  # The middleware that turns plain http into a redirect. It lives in the namespace, not here,
+  # because it is shared with everything else on the cluster.
+  redirectMiddleware: redirect-to-https

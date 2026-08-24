@@ -1,0 +1,64 @@
+name: publish images
+
+# Builds the two images and pushes them to this repository's own package namespace.
+#
+# On GitHub-hosted runners because the repository is public and those are free for it; the Gradle
+# half needs a browser anyway, which the hosted image already has.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+    paths:
+      - probe/**
+      - deploy/**
+      - .github/workflows/publish-images.yaml
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 21, not the runner's default: the modules declare a 21 toolchain, and letting Gradle
+          # go looking for one is a download nobody asked for.
+          java-version: '21'
+
+      - name: Work out the tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=main-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The same script a person runs locally. A build path that only exists in CI is a build path
+      # nobody can reproduce when it breaks.
+      - name: Build the artefacts
+        run: ./deploy/build.sh "${{ steps.tag.outputs.value }}"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+          REPO: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for image in site renderer; do
+            docker tag "kobweb-ssr-$image:$TAG" "$REPO/$image:$TAG"
+            docker push "$REPO/$image:$TAG"
+          done
+          echo "pushed $REPO/{site,renderer}:$TAG" >> "$GITHUB_STEP_SUMMARY"

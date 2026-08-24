@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kobweb-ssr
+description: A Kobweb site served with server-side rendering, plus the renderer that produces it
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

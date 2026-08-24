@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kobweb-ssr
+  labels:
+    app: kobweb-ssr
+spec:
+  selector:
+    app: kobweb-ssr
+  ports:
+    # Only the site is exposed. The renderer's port is deliberately absent from the Service: it
+    # takes a path and renders whatever is there, so anything that can reach it can make this
+    # server render arbitrary pages on demand.
+    - name: http
+      port: 80
+      targetPort: http

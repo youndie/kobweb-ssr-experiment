@@ -1,0 +1,34 @@
+# The Kobweb server, its site and the SSR plugin.
+#
+# Runtime only: the Gradle work happens outside and this copies the result, the same split
+# `publish-image.yaml` uses across the other repos. Building inside would mean either a JDK image
+# without a browser (the export needs one) or Playwright's image with a JDK the Gradle build does
+# not want. `deploy/build.sh` runs both halves so "prebuilt" is one command rather than a trap.
+#
+# Expects a fullstack export to have happened, and **deletes the pre-exported pages** — which is
+# the point of the arrangement rather than an economy. With `pages/` present the server answers a
+# page request with the finished export, so the renderer would spend 0.6 s reproducing what was
+# already on disk. Without it the server answers with the 1877-byte shell and the renderer does the
+# work, which is what this deployment exists to show. It degrades the right way: with the renderer
+# unreachable the plugin falls back, the visitor gets the shell plus client rendering, and the
+# reason is in the log.
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+
+COPY probe/site/.kobweb/conf.yaml ./.kobweb/conf.yaml
+COPY probe/site/.kobweb/server/server.jar ./.kobweb/server/server.jar
+COPY probe/site/.kobweb/server/plugins/ ./.kobweb/server/plugins/
+COPY probe/site/.kobweb/site/system/ ./.kobweb/site/system/
+COPY probe/site/.kobweb/site/resources/ ./.kobweb/site/resources/
+
+# The plugin resolves paths relative to the working directory: conf.yaml's siteRoot, and the route
+# metadata it discovers routes from. Started from anywhere else it silently falls back to the
+# hand-declared list, which is a smaller site with no error.
+COPY probe/site/build/processedResources/js/main/kobweb/metadata/ ./build/processedResources/js/main/kobweb/metadata/
+
+EXPOSE 8080
+ENTRYPOINT ["java", \
+  "-Dkobweb.server.environment=PROD", \
+  "-Dkobweb.site.layout=FULLSTACK", \
+  "-jar", ".kobweb/server/server.jar"]

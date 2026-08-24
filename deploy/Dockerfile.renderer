@@ -1,0 +1,21 @@
+# The headless-browser renderer.
+#
+# Chromium installed by Playwright's own CLI rather than starting from Playwright's image: that
+# image carries Firefox and WebKit too, which this never launches, and drops 3.89 GB on a node to
+# do it. Installing the one engine gives 1.88 GB and the same 0.42 s render.
+#
+# The browser still has to match the driver — the Java binding refuses a Chromium it did not
+# install itself — so it is installed through the very jar the renderer runs with, and the two
+# cannot drift apart.
+
+FROM eclipse-temurin:21-jre-noble
+WORKDIR /app
+COPY probe/renderer/build/install/renderer/ ./
+RUN java -cp "lib/*" com.microsoft.playwright.CLI install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+EXPOSE 7899
+# localhost, because the two containers share a pod's network namespace: the renderer fetches the
+# page it is rendering from the site container beside it, over loopback.
+ENTRYPOINT ["./bin/renderer", "--target", "http://localhost:8080", "--port", "7899"]
+CMD ["--workers", "1"]

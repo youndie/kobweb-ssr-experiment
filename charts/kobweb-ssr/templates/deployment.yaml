@@ -1,0 +1,71 @@
+{{- if not .Values.hostname }}
+{{- fail "hostname must be set: an empty one renders Host(``), which Traefik accepts and which matches nothing" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kobweb-ssr
+  labels:
+    app: kobweb-ssr
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: kobweb-ssr
+  template:
+    metadata:
+      labels:
+        app: kobweb-ssr
+    spec:
+      containers:
+        # Two containers in one pod rather than two deployments, and not for tidiness: the renderer
+        # reaches the site over loopback, so they must share a network namespace. Splitting them
+        # would mean the renderer fetching pages through the cluster network and, worse, through
+        # the ingress — which would put its own requests back through the interceptor.
+        - name: site
+          image: "{{ .Values.image.repository }}/site:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Dkobwebssr.cache.enabled={{ .Values.ssr.cache.enabled }}
+                -Dkobwebssr.cache.ttl.seconds={{ .Values.ssr.cache.ttlSeconds }}
+                -Dkobwebssr.renderer.url=http://localhost:7899
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+              # Carries the bypass header on purpose. Every page route is server-rendered, so a
+              # plain probe would trigger a render on every check and fill the cache with entries
+              # nobody asked for. A liveness check must not change what it is checking.
+              httpHeaders:
+                - name: X-Kobweb-Ssr-Bypass
+                  value: "1"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+              httpHeaders:
+                - name: X-Kobweb-Ssr-Bypass
+                  value: "1"
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources: {{- toYaml .Values.site.resources | nindent 12 }}
+
+        - name: renderer
+          image: "{{ .Values.image.repository }}/renderer:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--workers", "{{ .Values.renderer.workers }}"]
+          ports:
+            - name: renderer
+              containerPort: 7899
+          readinessProbe:
+            httpGet: { path: /health, port: renderer }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{- toYaml .Values.renderer.resources | nindent 12 }}
