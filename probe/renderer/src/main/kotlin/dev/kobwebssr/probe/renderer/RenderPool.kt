@@ -249,8 +249,15 @@ class RenderPool(target: String, private val workers: Int, private val instrumen
         // language=javascript
         evaluate(
             """
-            for (let s = 0; s < document.styleSheets.length; s++) {
-                var stylesheet = document.styleSheets[s]
+            // Iterated over a snapshot rather than over document.styleSheets by index. The collection is
+            // live, and assigning innerHTML to a style element re-creates its sheet; in jsdom that moves
+            // it within the collection, so the indices shift under the loop and entries get skipped.
+            // Measured on the same page at the same moment — by live index: 348, 0, 62452, 0, 1141; over
+            // a snapshot: 348, 3900, 62452, 1353, 1141. Chromium does not reorder, which is why Kobweb's
+            // own export script, which this is otherwise a verbatim copy of, has never been bitten.
+            const sheets = Array.from(document.styleSheets);
+            for (let s = 0; s < sheets.length; s++) {
+                var stylesheet = sheets[s]
                 stylesheet = stylesheet instanceof CSSStyleSheet ? stylesheet : null;
 
                 // Trying to peek at external stylesheets causes a security exception so step over them

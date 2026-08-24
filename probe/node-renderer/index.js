@@ -8,12 +8,16 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 // same server for it again.
 const BYPASS_HEADER = 'X-Kobweb-Ssr-Bypass';
 
-// Kept character-for-character identical to the browser renderer's copy, which in turn is
-// KobwebExportTask's. Any "improvement" on one side shows up as a difference in the comparison
-// this module exists to make.
+// Kept in step with the browser renderer's copy, which is KobwebExportTask's script plus the
+// snapshot fix below. Any change on one side shows up as a difference in the comparison this module
+// exists to make, so they move together or not at all.
 const BAKE_STYLESHEETS = `
-for (let s = 0; s < document.styleSheets.length; s++) {
-    var stylesheet = document.styleSheets[s]
+// Snapshot, not the live collection — see the note in RenderPool.kt. Under jsdom, assigning
+// innerHTML moves a sheet within document.styleSheets and the loop skips entries: this is what was
+// costing this renderer 61 CSS rules, not any gap in jsdom's CSSOM.
+const sheets = Array.from(document.styleSheets);
+for (let s = 0; s < sheets.length; s++) {
+    var stylesheet = sheets[s]
     stylesheet = stylesheet instanceof CSSStyleSheet ? stylesheet : null;
     if (stylesheet != null && stylesheet.href == null) {
         var styleNode = stylesheet.ownerNode
