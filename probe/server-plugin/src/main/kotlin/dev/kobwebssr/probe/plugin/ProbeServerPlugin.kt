@@ -33,12 +33,24 @@ class ProbeServerPlugin : KobwebServerPlugin {
     )
 
     /**
-     * Which paths get server-rendered. Hard-coded for M1, and that is a known gap rather than a
-     * simplification: Kobweb's KSP output already carries the real route table on the JVM as
-     * `FrontendData` (see research §1.4), and wiring this to it belongs with the Gradle plugin
-     * work, not here.
+     * Which paths get server-rendered, and whether each one may be rendered for a request that
+     * carries context the renderer throws away.
+     *
+     * Hard-coded for now, and that is a known gap rather than a simplification: Kobweb's KSP output
+     * already carries the real route table on the JVM as `FrontendData` (research §1.4), and
+     * wiring this to it is M5-04.
      */
-    private val ssrRoutes = setOf("/ssr", "/state")
+    private val ssrRoutes = listOf(
+        // A constant page: nothing in it reads the request, so no part of the request can change
+        // what it should look like. That is a statement by whoever wrote the page, not an inference.
+        SsrRoute("/ssr", ignores = RequestContext.entries.toSet()),
+        // Not localised, so the language header cannot change it — but it is not declared free of
+        // the rest, so a query string or a cookie still stops it being served from a render that
+        // never saw them.
+        SsrRoute("/state", ignores = setOf(RequestContext.LanguagePreference)),
+    )
+
+    private data class SsrRoute(val path: String, val ignores: Set<RequestContext> = emptySet())
 
     override fun configure(application: Application) {
         application.log.info("[ssr-probe] plugin loaded: ${javaClass.name}")
@@ -50,8 +62,29 @@ class ProbeServerPlugin : KobwebServerPlugin {
             if (call.request.headers[BYPASS_HEADER] != null) return@intercept
 
             val path = call.request.path()
+            val route = ssrRoutes.firstOrNull { it.path == path }
 
-            if (path in ssrRoutes) {
+            if (route != null) {
+                // **M5-01 / Risk 9.** Nothing of the visitor's request reaches the renderer: it
+                // builds its own URL with only the export flags and sends a single header. So for
+                // a request that carries a query string, cookies or credentials, the page that
+                // comes back is the page for *some other* request — returned with status 200 and
+                // then cached under the path alone, which hands the same wrong page to everyone.
+                //
+                // Refusing is more expensive than rendering and it is the only honest option
+                // available today: a silently wrong page is worse than no server rendering at all.
+                // The route-level opt-out is a statement by whoever wrote the page, not a guess.
+                val dropped = call.droppedRequestContext() - route.ignores
+                if (dropped.isNotEmpty()) {
+                    application.log.info(
+                        "[ssr-probe] not rendering $path: the request carries " +
+                            dropped.joinToString { it.description } +
+                            ", which the renderer would drop; declare the route as ignoring it if " +
+                            "the page genuinely does not read it",
+                    )
+                    return@intercept
+                }
+
                 // Off the Ktor pipeline thread, and this is not hygiene — it is the difference
                 // between working and deadlocking. Kobweb runs on Netty, the renderer fetches the
                 // page it is rendering *from this same server*, and both the render call and the
@@ -100,6 +133,9 @@ class ProbeServerPlugin : KobwebServerPlugin {
             get("/ssr-probe/renderer-health") {
                 call.respondText(if (renderer.isHealthy()) "renderer: up" else "renderer: down")
             }
+            get("/ssr-probe/echo-headers") {
+                call.respondText(call.request.headers.names().sorted().joinToString("\n"))
+            }
             get("/ssr-probe/cache") {
                 call.respondText(cache.stats())
             }
@@ -119,3 +155,28 @@ class ProbeServerPlugin : KobwebServerPlugin {
 
 /** Must match the header the renderer sets on its browser context. */
 const val BYPASS_HEADER = "X-Kobweb-Ssr-Bypass"
+
+/**
+ * The kinds of request context a render throws away.
+ *
+ * Kinds rather than a single flag, and the reason is not tidiness. Almost every browser sends
+ * `Accept-Language`, so a one-bit "this route ignores the request" opt-out would refuse practically
+ * every real visitor on any route that had not opted out — that is, it would collapse into an
+ * off switch for server rendering, and the pressure would be to declare every route free of
+ * everything, which is how a guard stops guarding. Per kind, a page can truthfully say it is not
+ * localised without also claiming it ignores its own query string.
+ */
+private enum class RequestContext(val description: String) {
+    QueryString("a query string"),
+    Cookies("cookies"),
+    Credentials("credentials"),
+    LanguagePreference("a language preference"),
+}
+
+/** Names what this particular request carries that would not survive a render. */
+private fun ApplicationCall.droppedRequestContext(): Set<RequestContext> = buildSet {
+    if (request.queryParameters.entries().isNotEmpty()) add(RequestContext.QueryString)
+    if (request.headers[HttpHeaders.Cookie] != null) add(RequestContext.Cookies)
+    if (request.headers[HttpHeaders.Authorization] != null) add(RequestContext.Credentials)
+    if (request.headers[HttpHeaders.AcceptLanguage] != null) add(RequestContext.LanguagePreference)
+}
