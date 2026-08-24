@@ -1,6 +1,7 @@
 package dev.kobwebssr.probe.plugin
 
 import com.varabyte.kobweb.server.plugin.KobwebServerPlugin
+import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -8,28 +9,59 @@ import io.ktor.server.routing.*
 import io.ktor.util.pipeline.*
 
 /**
- * The M0 probe. One run answers four questions, and the marker in each response body says who
- * produced it, so no answer has to be inferred.
+ * Two milestones live in one plugin, kept apart on purpose.
  *
- *  1. Does `ServiceLoader` find a jar placed by the `kobwebServerPlugin` configuration?
- *     `/ssr-probe` responding at all is the answer.
- *  2. Can a plugin serve a route no Kobweb page owns? `/ssr-probe/fresh`.
- *  3. **M0-03.** Can a plugin claim a route a Kobweb page *does* own, using `routing { }`?
- *     `/collide`, against the page of the same name.
- *  4. **M0-04.** Can it claim one from an interceptor that runs before routing?
- *     `/collide2`, against the page of the same name.
+ * **M0** established where a third-party plugin can and cannot take over a route. Its evidence is
+ * the `/ssr-probe`, `/collide` and `/collide2` handlers below, and they are left exactly as they
+ * were measured so `probe/README.md`'s table stays reproducible.
  *
- * Note that `configure` is called *after* Kobweb has already run `configureRouting`, so anything
- * registered here through `routing { }` is a later arrival at the same routing tree.
+ * **M1** is the part that renders: [ssrRoutes] are answered from [PageRenderer] instead of from
+ * Kobweb's own handling, through the interceptor M0 proved is the only hook that wins in both
+ * layouts.
  */
 class ProbeServerPlugin : KobwebServerPlugin {
+    private val renderer: PageRenderer = HttpSidecarRenderer(
+        baseUrl = System.getProperty(RENDERER_URL_PROPERTY) ?: "http://localhost:7899",
+    )
+
+    /**
+     * Which paths get server-rendered. Hard-coded for M1, and that is a known gap rather than a
+     * simplification: Kobweb's KSP output already carries the real route table on the JVM as
+     * `FrontendData` (see research §1.4), and wiring this to it belongs with the Gradle plugin
+     * work, not here.
+     */
+    private val ssrRoutes = setOf("/ssr")
+
     override fun configure(application: Application) {
         application.log.info("[ssr-probe] plugin loaded: ${javaClass.name}")
 
-        // Question 4: run before Kobweb's routing gets the call at all. `Plugins` is the earliest
-        // phase of the call pipeline, and routing is installed on the later `Call` phase.
         application.intercept(ApplicationCallPipeline.Plugins) {
-            if (call.request.path() == "/collide2") {
+            // The renderer's browser fetches the very page it is rendering from this same server.
+            // Without standing aside for it, the plugin would intercept that fetch too and ask the
+            // renderer again, forever.
+            if (call.request.headers[BYPASS_HEADER] != null) return@intercept
+
+            val path = call.request.path()
+
+            if (path in ssrRoutes) {
+                when (val result = renderer.render(RenderRequest(path))) {
+                    is RenderResult.Rendered -> {
+                        call.respondText(result.html, ContentType.Text.Html)
+                        finish()
+                    }
+                    // Standing aside rather than returning 5xx: an unavailable renderer should cost
+                    // the visitor a client-rendered page, not an error page. The log line is what
+                    // makes the difference visible, since a silently degraded SSR looks exactly
+                    // like a working one from outside.
+                    is RenderResult.Failed -> {
+                        application.log.warn("[ssr-probe] falling back to Kobweb for $path: ${result.reason}")
+                    }
+                }
+                return@intercept
+            }
+
+            // M0-04's evidence: claiming a real page's route from before routing.
+            if (path == "/collide2") {
                 call.respondText("RENDERED BY THE SERVER PLUGIN: /collide2 (early intercept)")
                 finish()
             }
@@ -42,9 +74,21 @@ class ProbeServerPlugin : KobwebServerPlugin {
             get("/ssr-probe/fresh") {
                 call.respondText("RENDERED BY THE SERVER PLUGIN: /ssr-probe/fresh")
             }
+            // M0-03's evidence: claiming a real page's route from routing { }, which loses in the
+            // static layout and wins in the fullstack one.
             get("/collide") {
                 call.respondText("RENDERED BY THE SERVER PLUGIN: /collide (routing)")
             }
+            get("/ssr-probe/renderer-health") {
+                call.respondText(if (renderer.isHealthy()) "renderer: up" else "renderer: down")
+            }
         }
     }
+
+    companion object {
+        const val RENDERER_URL_PROPERTY = "kobwebssr.renderer.url"
+    }
 }
+
+/** Must match the header the renderer sets on its browser context. */
+const val BYPASS_HEADER = "X-Kobweb-Ssr-Bypass"

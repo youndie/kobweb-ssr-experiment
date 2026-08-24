@@ -15,3 +15,4 @@ rootProject.name = "probe"
 
 include(":site")
 include(":server-plugin")
+include(":renderer")
