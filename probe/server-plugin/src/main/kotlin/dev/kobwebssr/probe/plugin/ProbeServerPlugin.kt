@@ -38,7 +38,7 @@ class ProbeServerPlugin : KobwebServerPlugin {
      * `FrontendData` (see research §1.4), and wiring this to it belongs with the Gradle plugin
      * work, not here.
      */
-    private val ssrRoutes = setOf("/ssr")
+    private val ssrRoutes = setOf("/ssr", "/state")
 
     override fun configure(application: Application) {
         application.log.info("[ssr-probe] plugin loaded: ${javaClass.name}")

@@ -27,7 +27,7 @@ sealed interface RenderOutcome {
  * the part that was never the problem. Wait time is therefore recorded separately from render
  * time, and both are reported.
  */
-class RenderPool(target: String, private val workers: Int) {
+class RenderPool(target: String, private val workers: Int, private val instrumentHydration: Boolean = false) {
     private val queue = ArrayBlockingQueue<Job>(256)
 
     private val queued = AtomicLong()
@@ -102,6 +102,8 @@ class RenderPool(target: String, private val workers: Int) {
                 page.onPageError { errors += it }
                 page.navigate("$target$path?_kobwebIsExporting=true&_kobwebColorModeStrategy=BOTH")
                 page.bakeStyleSheets()
+                page.embedComposedState()
+                if (instrumentHydration) page.embedHydrationProbe()
                 if (errors.isNotEmpty()) return RenderOutcome.Failed("page crashed: ${errors.first()}")
                 val document = Jsoup.parse(page.content())
                 document.rejectionReason()?.let { return RenderOutcome.Failed(it) }
@@ -137,6 +139,81 @@ class RenderPool(target: String, private val workers: Int) {
         val empty = select("style").count { it.data().isBlank() }
         if (empty > 0) return "$empty empty <style> element(s) — the CSSOM was not baked in"
         return null
+    }
+
+    /**
+     * **M3-01 / D3.** Pulls the composition's `SaveableStateRegistry` out through the hook the
+     * application installs on `window`, and writes it back into the document as a script the
+     * client will read on boot.
+     *
+     * The state travels **inside the HTML** rather than beside it, and that is not a shortcut: it
+     * has to be in the document for the client to see it before the bundle runs, so a second
+     * channel would only be a copy. This is why `RenderResult` no longer carries a `state` field —
+     * see the correction on D3 in the research.
+     *
+     * A page whose application does not install the hook renders exactly as before. That is the
+     * intended behaviour: state transfer is opt-in per application, not a property of the renderer.
+     */
+    private fun Page.embedComposedState() {
+        // language=javascript
+        evaluate(
+            """
+            (function () {
+                if (typeof window.__kobwebSsrSaveState !== 'function') return;
+                const state = window.__kobwebSsrSaveState();
+                if (!state || state === '{}') return;
+                const script = document.createElement('script');
+                // Embedded as a JS string literal, so a '</script>' inside a saved value cannot
+                // close the tag it is sitting in.
+                script.textContent = 'window.KOBWEB_SSR_STATE = ' + JSON.stringify(state) + ';';
+                document.head.appendChild(script);
+            })();
+            """.trimIndent(),
+        )
+    }
+
+    /**
+     * **M3-03 / M3-04.** An optional probe that counts what the client does to the server-rendered
+     * tree once the bundle boots.
+     *
+     * Injected by the renderer rather than written into the application, because the question is
+     * about the framework's behaviour and instrumenting the application would change the subject.
+     * It is off by default: it is a measuring instrument, not a feature.
+     */
+    private fun Page.embedHydrationProbe() {
+        // language=javascript
+        evaluate(
+            """
+            (function () {
+                const script = document.createElement('script');
+                script.textContent = `
+                  // Installed while <head> is being parsed, before the bundle at the end of <body>
+                  // has run. Observing on DOMContentLoaded is too late: the Kobweb bundle wipes and
+                  // re-renders before that event fires, so a probe started there sees a settled
+                  // tree and reports zero — which is what the first version of this probe did.
+                  window.__hydrationStats = { removed: 0, added: 0, batches: 0, firstRemovalAtMs: null };
+                  const t0 = performance.now();
+                  new MutationObserver((records) => {
+                    const s = window.__hydrationStats;
+                    for (const r of records) {
+                      // The HTML parser only ever adds. A removal inside the Kobweb root is the
+                      // client throwing away what the server sent.
+                      const inRoot = r.target.id === '_kobweb-root' ||
+                        (r.target.closest && r.target.closest('#_kobweb-root'));
+                      if (!inRoot) continue;
+                      s.batches += 1;
+                      s.added += r.addedNodes.length;
+                      if (r.removedNodes.length) {
+                        if (s.firstRemovalAtMs === null) s.firstRemovalAtMs = Math.round(performance.now() - t0);
+                        s.removed += r.removedNodes.length;
+                      }
+                    }
+                  }).observe(document.documentElement, { childList: true, subtree: true });
+                `;
+                document.head.insertBefore(script, document.head.firstChild);
+            })();
+            """.trimIndent(),
+        )
     }
 
     /**

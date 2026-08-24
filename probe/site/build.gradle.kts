@@ -38,6 +38,7 @@ kotlin {
     sourceSets {
         jsMain.dependencies {
             implementation(libs.compose.runtime)
+            implementation(libs.compose.runtime.saveable)
             implementation(libs.compose.html.core)
             implementation(libs.kobweb.core)
             implementation(libs.kobweb.silk)

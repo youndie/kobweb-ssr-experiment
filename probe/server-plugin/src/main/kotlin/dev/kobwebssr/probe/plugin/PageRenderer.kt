@@ -13,10 +13,11 @@ package dev.kobwebssr.probe.plugin
  *  * eventually an in-process call to `renderToString`, if JetBrains ship a JVM target for
  *    Compose HTML — at which point this interface is the only thing that has to still fit.
  *
- * [RenderResult.state] is a placeholder in M1: the browser renderer has nowhere to get it from
- * yet. It is declared now because M3 transfers state through `SaveableStateRegistry`, and finding
- * out in M3 that the seam has no room for it would mean changing the seam — which is exactly the
- * failure M2 is meant to catch early.
+ * **Correction from M3.** This interface used to carry a `state` field, declared in M1 so that
+ * M3 would not have to reshape the seam. M3 did not need it: the composition's saved state has to
+ * be inside the document for the client to read it before the bundle runs, so carrying it beside
+ * the HTML would only have been a copy. The field is gone rather than left unused — a declared
+ * channel that nothing writes to reads as a supported feature.
  */
 interface PageRenderer {
     fun render(request: RenderRequest): RenderResult
@@ -31,8 +32,7 @@ interface PageRenderer {
 data class RenderRequest(val path: String)
 
 sealed interface RenderResult {
-    /** @param state serialised composition state; always null until M3. */
-    data class Rendered(val html: String, val state: String? = null) : RenderResult
+    data class Rendered(val html: String) : RenderResult
 
     /**
      * The renderer could not produce the page. Carries a reason rather than a boolean because the

@@ -28,8 +28,9 @@ fun main(args: Array<String>) {
     val target = args.valueOf("--target") ?: "http://localhost:8080"
     val port = args.valueOf("--port")?.toIntOrNull() ?: 7899
     val workers = args.valueOf("--workers")?.toIntOrNull() ?: 2
+    val instrumentHydration = args.contains("--instrument-hydration")
 
-    val pool = RenderPool(target, workers)
+    val pool = RenderPool(target, workers, instrumentHydration)
     val server = HttpServer.create(InetSocketAddress(port), 0)
 
     server.createContext("/health") { it.reply(200, "text/plain", "ok") }
