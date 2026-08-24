@@ -25,3 +25,5 @@ The short version:
 
 Documentation is written in Russian; code, commit messages and everything inside source files are
 in English.
+
+Licensed under [Apache 2.0](LICENSE).
