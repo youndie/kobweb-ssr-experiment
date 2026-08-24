@@ -15,19 +15,32 @@ image:
 
 replicas: 1
 
+# Memory figures below are cgroup accounting, not summed RSS.
+#
+# The first version of this file reserved 960 MiB and capped at 2 GiB, from a measurement that
+# added up RSS across the renderer's process tree. That counts Chromium's shared pages once per
+# process and came out 2.4x too high. By cgroup — which counts a page once — the renderer is about
+# 68 MiB fixed plus 144 MiB per worker, and the site about 190 MiB under load. Requests reserve
+# node capacity whether or not anything uses them, so the wrong number was being taken out of the
+# cluster continuously.
+#
+# Verified at these limits under three rounds of eight concurrent renders plus every page: both
+# containers settled under 195 MiB and neither was OOMKilled.
+
 site:
   resources:
-    requests: { cpu: 100m, memory: 320Mi }
-    limits: { memory: 768Mi }
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 384Mi }
 
 renderer:
-  # Pool size is bounded by memory rather than cores: roughly 342 MiB per worker on top of about
-  # 115 MiB fixed, measured at 1, 2 and 4 workers. One worker is enough for a demo; raising this
-  # without raising the memory limit buys nothing but an OOMKill.
+  # Pool size is bounded by memory rather than cores: about 144 MiB per worker on top of 68 MiB
+  # fixed, measured by cgroup at 1, 2 and 4 workers (212, 356, 643 MiB under load — a clean linear
+  # fit). One worker is enough for a demo; raising this without raising the memory limit buys
+  # nothing but an OOMKill.
   workers: 1
   resources:
-    requests: { cpu: 200m, memory: 640Mi }
-    limits: { memory: 1280Mi }
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { memory: 512Mi }
 
 ssr:
   cache:
