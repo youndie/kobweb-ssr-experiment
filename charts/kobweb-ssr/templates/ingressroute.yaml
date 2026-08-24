@@ -12,7 +12,10 @@ spec:
           port: 80
   tls:
     certResolver: {{ .Values.traefik.certResolver }}
+{{- if .Values.traefik.httpRedirect.enabled }}
 ---
+# Only rendered where plain http reaches Traefik at all. See the note in values.yaml: on the
+# cluster this was built for it does not, and an unrendered route is honest where a dead one is not.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -23,5 +26,6 @@ spec:
     - kind: Rule
       match: Host(`{{ .Values.hostname }}`)
       middlewares:
-        - name: {{ .Values.traefik.redirectMiddleware }}
+        - name: {{ .Values.traefik.httpRedirect.middlewareName }}
       services: []
+{{- end }}

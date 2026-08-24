@@ -1,4 +1,4 @@
-{{- if .Values.traefik.createRedirectMiddleware }}
+{{- if and .Values.traefik.httpRedirect.enabled .Values.traefik.httpRedirect.createMiddleware }}
 # Своя копия, а не ссылка на существующую в соседнем неймспейсе.
 #
 # У traefik может быть выключен `allowCrossNamespace`, и тогда квалифицированное имя не
@@ -11,7 +11,7 @@
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: {{ .Values.traefik.redirectMiddleware }}
+  name: {{ .Values.traefik.httpRedirect.middlewareName }}
 spec:
   redirectScheme:
     scheme: https

@@ -37,9 +37,20 @@ ssr:
 traefik:
   entryPoint: websecure
   certResolver: cloudflare
-  # The middleware that turns plain http into a redirect. Traefik resolves it in the route's own
-  # namespace, so this chart ships its own copy rather than pointing at one next door: with
-  # `allowCrossNamespace` off a qualified name does not resolve, and Traefik then drops the route
-  # instead of complaining. Set to false where the namespace already has one under this name.
-  redirectMiddleware: redirect-to-https
-  createRedirectMiddleware: true
+  # An http route that redirects to https, plus the middleware to do it with.
+  #
+  # **Off by default, and measured rather than assumed.** On the cluster this was built for, plain
+  # http answers 404 for every host — including a neighbour that has shipped exactly this route for
+  # ten days — so the `web` entrypoint is not served there and the redirect happens before Traefik
+  # sees the request. A route that provably matches nothing is worse than no route: it reads as
+  # working. Turn it on where http actually reaches Traefik.
+  #
+  # The middleware is shipped rather than borrowed from a neighbouring namespace: Traefik resolves
+  # middlewares in the route's own namespace, and with `allowCrossNamespace` off a qualified name
+  # does not resolve — at which point Traefik drops the route instead of complaining. A
+  # `redirectScheme` is safe to copy in a way a `forwardAuth` is not; it references nothing outside
+  # itself. Set `createMiddleware` to false where the namespace already has one under this name.
+  httpRedirect:
+    enabled: false
+    createMiddleware: true
+    middlewareName: redirect-to-https
