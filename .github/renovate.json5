@@ -1,0 +1,121 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  extends: ["config:recommended"],
+
+  // Once a week, in UTC. Updates arrive as one Monday-morning batch rather than a trickle of a PR
+  // a day — every pull request here runs the full check, and that build is not cheap.
+  timezone: "Etc/UTC",
+  schedule: ["before 6am on monday"],
+
+  // Commits here are Conventional Commits, and a hook enforces it. `config:recommended` maps
+  // dependency bumps to `fix:` and everything else to `chore:`.
+  semanticCommits: "enabled",
+
+  labels: ["dependencies"],
+
+  // With the build harness merging itself these numbers stop being a throttle on human attention
+  // and become one on runner time, so they can be higher.
+  prConcurrentLimit: 5,
+  prHourlyLimit: 0,
+
+  // Renovate merges the pull request itself rather than arming GitHub's auto-merge: GitHub refuses
+  // to arm it on a branch with no required checks, and adding branch protection to `main` would
+  // change how this repository is worked in.
+  platformAutomerge: false,
+
+  // Vulnerabilities are the one thing that ignores the schedule.
+  vulnerabilityAlerts: {
+    schedule: ["at any time"],
+    labels: ["dependencies", "security"],
+  },
+
+  // kotlin-js-store holds a lock file the Kotlin/JS plugin generates for itself.
+  ignorePaths: [
+    "**/build/**",
+    "**/.gradle/**",
+    "**/kotlin-js-store/**",
+    "**/node_modules/**",
+  ],
+
+  packageRules: [
+    {
+      description: "Kotlin: the compiler and its plugins move as one version, and that is never a routine bump",
+      matchPackageNames: ["/^org\\.jetbrains\\.kotlin[:.]/"],
+      groupName: "kotlin",
+    },
+    {
+      description: "kotlinx ships as one release train — one PR",
+      matchPackageNames: ["/^org\\.jetbrains\\.kotlinx[:.]/"],
+      groupName: "kotlinx",
+    },
+    {
+      // Kobweb publishes a dozen coordinates under one version, and Compose HTML rides with it
+      // rather than with Compose Multiplatform: `compose-html` sits on 1.11.1 here while the
+      // androidx runtime is on 1.12.0, and that gap is Kobweb's, not a missed bump. Reading them
+      // in one pull request is the only way the pair stays a pair.
+      description: "Kobweb and the Compose HTML it is built against are read together",
+      matchPackageNames: [
+        "/^com\\.varabyte\\.kobweb/",
+        "/^org\\.jetbrains\\.compose\\.html[:.]/",
+      ],
+      groupName: "kobweb",
+    },
+    {
+      description: "The androidx Compose runtime: two artefacts, one version",
+      matchPackageNames: ["/^androidx\\.compose\\.runtime[:.]/"],
+      groupName: "compose runtime",
+    },
+    {
+      description: "Ktor modules share one version",
+      matchPackageNames: ["/^io\\.ktor[:.]/"],
+      groupName: "ktor",
+    },
+    {
+      // The two renderers are the point of this repository: one in the JVM under Playwright, one
+      // in Node under jsdom. A bump to either is a change to what the comparison measures, so it
+      // is read rather than merged — and the two move independently, so they do not share a PR.
+      description: "The renderers are the subject of the experiment, not dependencies of it",
+      matchPackageNames: ["com.microsoft.playwright:playwright", "jsdom"],
+      automerge: false,
+      labels: ["dependencies", "renderer"],
+    },
+    {
+      description: "The build harness arrives as one PR, not one per action",
+      matchManagers: ["github-actions"],
+      groupName: "ci actions",
+    },
+    {
+      // Both images are a JRE over the same export, and they are built and deployed as a pair.
+      // No check on a pull request builds either file.
+      description: "Base images: changing the JDK or the distro is a decision, not a bump",
+      matchManagers: ["dockerfile"],
+      automerge: false,
+      additionalBranchPrefix: "docker-",
+      groupName: "base images",
+    },
+    {
+      // `image.tag` names this repository's own release. The publish workflow writes it; Renovate
+      // moving it would pin the chart to whatever tag existed the morning it ran.
+      description: "The chart names its own image; that version is not a dependency",
+      matchManagers: ["helm-values"],
+      matchPackageNames: ["/^ghcr\\.io\\/youndie\\//"],
+      enabled: false,
+    },
+    {
+      description: "Majors of anything that ships get a human",
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "major"],
+    },
+    // Last, so it wins over the major rule above. A major of `actions/checkout` is not the same
+    // kind of event as a major of Kobweb: the build harness is not shipped to anyone, and the
+    // check that would catch a bad bump is the build itself — which already ran on the PR.
+    {
+      description: "The build harness merges itself, majors included: CI on pull_request is the review",
+      matchManagers: ["github-actions", "gradle-wrapper"],
+      automerge: true,
+      automergeType: "pr",
+    },
+  ],
+}
