@@ -5,5 +5,5 @@
   "description": "M2: the second implementation of the renderer seam — the app run in Node under a DOM emulation",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
-  "dependencies": { "jsdom": "^29.1.1" }
+  "dependencies": { "jsdom": "^31.0.0" }
 }
