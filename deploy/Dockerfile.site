@@ -13,7 +13,7 @@
 # unreachable the plugin falls back, the visitor gets the shell plus client rendering, and the
 # reason is in the log.
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 WORKDIR /app
 
 COPY probe/site/.kobweb/conf.yaml ./.kobweb/conf.yaml
