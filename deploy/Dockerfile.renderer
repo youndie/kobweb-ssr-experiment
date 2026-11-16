@@ -8,7 +8,7 @@
 # install itself — so it is installed through the very jar the renderer runs with, and the two
 # cannot drift apart.
 
-FROM eclipse-temurin:21-jre-noble
+FROM eclipse-temurin:25-jre-noble
 WORKDIR /app
 COPY probe/renderer/build/install/renderer/ ./
 RUN java -cp "lib/*" com.microsoft.playwright.CLI install --with-deps chromium \
